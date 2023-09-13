@@ -1,27 +1,63 @@
-const { Tech, Matchup } = require('../models');
+const { User } = require('../models');
+const { AuthenticationError } = require('apollo-server-express');
+const { signToken } = require('../utils/auth');
 
 const resolvers = {
   Query: {
-    tech: async () => {
-      return Tech.find({});
-    },
-    matchups: async (parent, { _id }) => {
-      const params = _id ? { _id } : {};
-      return Matchup.find(params);
+    me: async (parent, args, context) => {
+      if (!context.user) {
+        throw new AuthenticationError('Please log in');
+      }
+      return User.findById(context.user._id).populate('savedBooks');
     },
   },
   Mutation: {
-    createMatchup: async (parent, args) => {
-      const matchup = await Matchup.create(args);
-      return matchup;
+    login: async (_, { email, password }) => {
+      const user = await User.findOne({ email }).exec();
+      if (!user || !(await user.isCorrectPassword(password))) {
+        throw new AuthenticationError('Incorrect email or password');
+      }
+      const token = signToken(user);
+      return { token, user };
     },
-    createVote: async (parent, { _id, techNum }) => {
-      const vote = await Matchup.findOneAndUpdate(
-        { _id },
-        { $inc: { [`tech${techNum}_votes`]: 1 } },
+    addUser: async (_, { username, email, password }) => {
+      try {
+        const newUser = await User.create({ username, email, password });
+        const token = signToken(newUser);
+        return { token, user: newUser };
+      } catch (err) {
+        console.error(err);
+        throw new Error('User creation failed');
+      }
+    },
+    saveBook: async (_, { book }, context) => {
+      if (!context.user) {
+        throw new AuthenticationError('You need to be logged in!');
+      }
+      const updatedUser = await User.findByIdAndUpdate(
+        context.user._id,
+        {
+          $addToSet: { savedBooks: book },
+        },
+        {
+          new: true,
+          runValidators: true,
+        }
+      );
+      return updatedUser;
+    },
+    removeBook: async (_, { bookId }, context) => {
+      if (!context.user) {
+        throw new AuthenticationError('You need to be logged in!');
+      }
+      const updatedUser = await User.findByIdAndUpdate(
+        context.user._id,
+        {
+          $pull: { savedBooks: { bookId } },
+        },
         { new: true }
       );
-      return vote;
+      return updatedUser;
     },
   },
 };
